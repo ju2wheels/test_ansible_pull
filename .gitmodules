@@ -1,0 +1,3 @@
+[submodule "roles/test_submodules"]
+	path = roles/test_submodules
+	url = https://github.com/ju2wheels/test_submodules.git

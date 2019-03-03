@@ -1,0 +1,203 @@
+#!/bin/bash
+
+set -u
+
+function _is_getopt_enhanced()
+{
+  # Determiens if the installed getopt is the "enhanced" "GNU" version that allows for long option handling.
+  #
+  # Output: Nothing for stdout. stderr error message.
+  # Returns: 0 if getopt is the enhanced version or 1 if it is not.
+
+  getopt -T >/dev/null 2>&1
+
+  if [[ $? -ne 4 ]]; then
+    echo '_is_getopt_enhanced: getopt detection indicates it does not support long options' 1>&2
+
+    return 1
+  fi
+
+  return 0
+}
+
+function _param_not_empty
+{
+  # Determines if the provided parameter is empty and raises an error.
+  #
+  # Args:
+  #   parameter_name: The name of the parameter.
+  #   parameter_value: The value of the parameter.
+  #   error_message: Custom error message to return if the parameter value is empty.
+  # Output: Nothing to stdout. stderr error message.
+  # Returns: 0 if the parameter is not empty, or 1 if it is empty, or 2 on parameter error.
+
+  local caller_parent=''
+  local last_caller=''
+  local error_message=''
+  local parameter_name=''
+  local parameter_value=''
+
+  if [[ $# -ne 2 ]] && [[ $# -ne 3 ]]; then
+    echo 'Invalid number of parameters...' 1>&2
+    echo 'Usage: _param_not_empty <parameter_name> <parameter_value> [<error_message>]' 1>&2
+
+    return 2
+  fi
+
+  last_caller="$(caller 0)"
+
+  if [[ $? -ne 0 ]]; then
+    # Use the SHELL and PID if function is called from CLI since there wont be a calling function
+    caller_parent="${SHELL}[$$]"
+  else
+    caller_parent="$(awk '{print $2;}' <<< "${last_caller}")"
+  fi
+
+  parameter_name="$1"
+  parameter_value="$2"
+
+  if [[ -z "${parameter_name}" ]]; then
+    echo "_param_not_empty: parameter_name must be provided and can't be an empty string" 1>&2
+
+    return 2
+  fi
+
+  if [[ $# -eq 3 ]]; then
+    error_message="$3"
+  fi
+
+  if [[ -z "${parameter_value}" ]]; then
+    if [[ -z "${error_message}" ]]; then
+      echo "${caller_parent}: ${parameter_name} must be provided and can't be an empty string" 1>&2
+    else
+      echo "${caller_parent}: ${error_message}" 1>&2
+    fi
+
+    return 1
+  fi
+
+  return 0
+}
+
+function local_hostnames
+{
+  # Ansible dynmaic inventory to return the full hostname, short hostname, and localhost as inventory hosts for
+  # the current machine.
+  #
+  # Note: We are using this dynamic inventory only to create a dynamic host list. While it can also be used to manage
+  #       group and host vars, we do not use it for that purpose and instead use the static inventory directories for
+  #       that.
+  #
+  # Output: JSON inventory to stdout. stderr error message.
+  # Returns: 0 on success, 1 on error, 2 on parameter error.
+
+  local full_hostname=''
+  local hostnames=''
+  local inventory_json=''
+  local list_host=''
+  local list_inventory=''
+  local short_hostname=''
+  local usage=''
+
+  hostnames=( 'localhost' )
+  list_inventory=0
+  usage='Usage: local_hostnames --list | --host <hostname>'
+
+  _is_getopt_enhanced || return 2
+
+  eval set -- "$(getopt -o h:l --long host:,list -n "local_hostnames" -- "$@" 2>/dev/null)"
+
+  if [[ $? -ne 0 ]]; then
+    echo 'Invalid options provided...' 1>&2
+    echo "${usage}" 1>&2
+
+    return 2
+  fi
+
+  while true; do
+    case  "$1" in
+      '-h' | '--host') list_host="$2"
+
+                        _param_not_empty 'hostname' "${list_host}" || return 2
+
+                       shift 2
+                       ;;
+      '-l' | '--list') list_inventory=1
+
+                       shift
+                       ;;
+                 '--') shift; break;;
+                    *) echo 'Invalid options provided...' 1>&2
+                       echo "${usage}" 1>&2
+
+                       return 2
+                       ;;
+    esac
+  done
+
+  if [[ ${list_inventory} -eq 0 ]] && [[ -z "${list_host}" ]]; then
+    echo "${usage}" 1>&2
+
+    return 2
+  fi
+
+  if [[ $# -ne 0 ]]; then
+    echo 'Invalid number of parameters...' 1>&2
+    echo "${usage}" 1>&2
+
+    return 2
+  fi
+
+  full_hostname="$(hostname -f)"
+
+  if [[ $? -ne 0 ]]; then
+    echo 'local_hostnames: Failed to retrieve full hostname' 1>&2
+
+    return 1
+  fi
+
+  short_hostname="$(hostname -s)"
+
+  if [[ $? -ne 0 ]]; then
+    echo 'local_hostnames: Failed to retrieve short hostname' 1>&2
+
+    return 1
+  fi
+
+  hostnames+=( "${short_hostname}" )
+
+  if [[ "${short_hostname}" != "${full_hostname}" ]]; then
+    hostnames+=( "${full_hostname}" )
+  fi
+
+  if [[ ${list_inventory} -eq 1 ]]; then
+    inventory_json="$(cat <<EOF
+{
+  "_meta": {
+    "hostvars": {}
+  },
+  "all": {
+    "children": [
+      "ungrouped"
+    ]
+  },
+  "ungrouped": {
+    "children": [],
+    "hosts": [$(printf '"%s",' "${hostnames[@]}" | sed 's/,$//')],
+    "vars": {}
+  }
+}
+EOF
+)"
+
+    echo -n "${inventory_json}"
+  else
+    # If the full inventory is not requested, we spit out the vars associated with the host
+
+    echo -n '{}'
+  fi
+
+  return 0
+}
+
+local_hostnames "$@"
