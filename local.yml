@@ -2,14 +2,5 @@
 
 - hosts: localhost
   tasks:
-    - name: Wait for instance cloud-init provisioning to finish
-      wait_for:
-        path:  /var/lib/cloud/instance/boot-finished
-        state: present
-        timeout: 600
-      when: >
-        ansible_virtualization_role == "guest" and
-        ansible_virtualization_type == "xen"
-
     - debug:
         msg: Start ansible-pull integration test playbook
